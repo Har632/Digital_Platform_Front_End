@@ -53,10 +53,11 @@ export default defineConfig({
               const response = await handleChatRequest(request)
               await writeResponse(res, response)
             } catch (error) {
+              const message = error instanceof Error ? error.message : 'Internal server error'
               console.error('Chat API middleware failed:', error)
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ error: 'Internal server error' }))
+              res.end(JSON.stringify({ error: message }))
             }
           })
         })

@@ -1,25 +1,122 @@
 import { useChat } from '@ai-sdk/react'
-import { useState } from 'react'
+import type { UIMessage } from 'ai'
+import { useEffect, useRef, useState } from 'react'
 import { ChatComposer } from './components/ChatComposer'
 import { ChatHeader } from './components/ChatHeader'
 import { ChatSidebar } from './components/ChatSidebar'
 import { MessageList } from './components/MessageList'
 import { WelcomeState } from './components/WelcomeState'
 import { aiChatTransport } from './services/aiService'
+import { RECENT_CHATS } from './constants/page'
 import './App.css'
 
+const SESSION_STORAGE_KEY = 'catlac-oneid-chat-sessions'
+type ChatSession = { id: string; title: string; messages: UIMessage[] }
+
+const loadSessions = (): ChatSession[] => {
+  try {
+    const stored = localStorage.getItem(SESSION_STORAGE_KEY)
+    return stored ? JSON.parse(stored) as ChatSession[] : []
+  } catch {
+    return []
+  }
+}
+
 function App() {
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    const savedSessions = loadSessions()
+    return savedSessions.length > 0 ? savedSessions : [{ id: crypto.randomUUID(), title: 'New chat', messages: [] }]
+  })
+  const initialSession = useRef<ChatSession | null>(null)
+  if (!initialSession.current) initialSession.current = sessions[0]
+  const [activeSessionId, setActiveSessionId] = useState(initialSession.current.id)
   const [input, setInput] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [fileLabels, setFileLabels] = useState<string[]>([])
   const [copied, setCopied] = useState<string | null>(null)
-  const { messages, sendMessage, status, stop } = useChat({ transport: aiChatTransport })
+  const [recentPromptOverride, setRecentPromptOverride] = useState<string[] | null>(null)
+  const [recentPromptSessionId, setRecentPromptSessionId] = useState<string | null>(null)
+  const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport: aiChatTransport, messages: initialSession.current.messages })
   const isStreaming = status === 'streaming' || status === 'submitted'
+  const activePromptHistory = messages
+    .filter((message) => message.role === 'user')
+    .map((message) => message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('').trim())
+    .filter((prompt) => prompt.length > 0)
+    .reverse()
+    .slice(0, 5)
+  const visibleRecentPrompts = activePromptHistory.length > 0 ? activePromptHistory : recentPromptOverride ?? RECENT_CHATS.slice(0, 5)
+  const recentChats = visibleRecentPrompts
+  const activeSession = sessions.find((session) => session.id === activeSessionId)
+  const visibleRecentSessionId = activePromptHistory.length > 0 ? activeSessionId : recentPromptSessionId ?? activeSession?.id
+  const recentSessionIds = visibleRecentSessionId ? visibleRecentPrompts.map(() => visibleRecentSessionId) : []
+
+  useEffect(() => {
+    setSessions((currentSessions) => {
+      const activeSession = currentSessions.find((session) => session.id === activeSessionId)
+      if (!activeSession || JSON.stringify(activeSession.messages) === JSON.stringify(messages)) return currentSessions
+      const latestPrompt = messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('').trim())
+        .filter((prompt) => prompt.length > 0)
+        .pop()
+      const nextSessions = [{ ...activeSession, title: latestPrompt || 'New chat', messages }, ...currentSessions.filter((session) => session.id !== activeSessionId)].slice(0, 5)
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSessions))
+      return nextSessions
+    })
+  }, [activeSessionId, messages])
+
+  const handleNewChat = () => {
+    stop()
+    const previousSessionId = activeSessionId
+    setRecentPromptOverride(activePromptHistory)
+    setRecentPromptSessionId(previousSessionId)
+    const newSession = { id: crypto.randomUUID(), title: 'New chat', messages: [] }
+    setSessions((currentSessions) => {
+      const currentMessages = messages
+      const currentPrompt = currentMessages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('').trim())
+        .filter((prompt) => prompt.length > 0)
+        .pop()
+      const preservedSessions = currentSessions.map((session) => session.id === activeSessionId
+        ? { ...session, title: currentPrompt || session.title, messages: currentMessages }
+        : session)
+      const nextSessions = [newSession, ...preservedSessions].slice(0, 5)
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSessions))
+      return nextSessions
+    })
+    setActiveSessionId(newSession.id)
+    setMessages([])
+    setInput('')
+    setFiles([])
+    setFileLabels([])
+  }
+
+  const handleSelectChat = (sessionId: string) => {
+    const session = sessions.find((candidate) => candidate.id === sessionId)
+    if (!session) return
+    stop()
+    setActiveSessionId(session.id)
+    setMessages(session.messages)
+    setInput('')
+    setFiles([])
+    setFileLabels([])
+    setRecentPromptOverride(null)
+    setRecentPromptSessionId(null)
+  }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const text = input.trim()
-    if (!text || isStreaming) return
+    if ((!text && files.length === 0 && fileLabels.length === 0) || isStreaming) return
+    const fileTransfer = files.length > 0 ? new DataTransfer() : undefined
+    files.forEach((file) => fileTransfer?.items.add(file))
     setInput('')
-    await sendMessage({ text })
+    setFiles([])
+    setFileLabels([])
+    setRecentPromptOverride(null)
+    setRecentPromptSessionId(null)
+    await sendMessage({ text, files: fileTransfer?.files })
   }
 
   const copyMessage = async (id: string, text: string) => {
@@ -30,13 +127,14 @@ function App() {
 
   return (
     <main className="app-shell">
-      <ChatSidebar onNewChat={() => window.location.reload()} />
+      <ChatSidebar recentChats={recentChats} recentSessionIds={recentSessionIds} onNewChat={handleNewChat} onSelectChat={handleSelectChat} />
 
       <section className="chat-panel">
         <ChatHeader />
         {messages.length === 0 && <WelcomeState onSuggestion={setInput} />}
         <MessageList messages={messages} copiedMessageId={copied} onCopy={copyMessage} isStreaming={isStreaming} />
-        <ChatComposer input={input} isStreaming={isStreaming} onChange={setInput} onSubmit={handleSubmit} onStop={stop} />
+        {error && <p className="chat-error" role="alert">{error.message}</p>}
+        <ChatComposer input={input} files={files} fileLabels={fileLabels} isStreaming={isStreaming} onChange={setInput} onFilesChange={setFiles} onFileLabelsChange={setFileLabels} onSubmit={handleSubmit} onStop={stop} />
       </section>
     </main>
   )

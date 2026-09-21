@@ -1,11 +1,11 @@
 export const PAGE_CONTENT = {
-  brand: 'Catalac OneID',
+  brand: 'Catlac OneID',
   eyebrow: 'Digital Identity & Intelligence Platform',
-  title: 'Catalac OneID',
+  title: 'Catlac OneID',
   welcomeTitle: 'What’s on your mind?',
   welcomeCopy: 'I’m here to help you think, create, and get things done. Start anywhere.',
   composerPlaceholder: 'Message Catalac OneID...',
-  disclaimer: 'Catalac OneID can make mistakes. Check important info.',
+  disclaimer: 'Catlac OneID can make mistakes. Check important info.',
   plan: 'Free plan',
 } as const
 

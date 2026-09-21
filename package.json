@@ -4,15 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node --use-system-ca node_modules/vite/bin/vite.js",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ai-sdk/azure": "^4.0.70",
     "@ai-sdk/openai": "^4.0.70",
     "@ai-sdk/react": "^4.0.109",
+    "@xyflow/react": "^12.11.6",
     "ai": "^7.0.106",
+    "dotenv": "^18.0.0",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
