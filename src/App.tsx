@@ -6,7 +6,7 @@ import { ChatHeader } from './components/ChatHeader'
 import { ChatSidebar } from './components/ChatSidebar'
 import { MessageList } from './components/MessageList'
 import { WelcomeState } from './components/WelcomeState'
-import { aiChatTransport } from './services/aiService'
+import { aiChatTransport, analyzeAttachedFile } from './services/aiService'
 import { RECENT_CHATS } from './constants/page'
 import './App.css'
 
@@ -33,11 +33,12 @@ function App() {
   const [input, setInput] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [fileLabels, setFileLabels] = useState<string[]>([])
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [recentPromptOverride, setRecentPromptOverride] = useState<string[] | null>(null)
   const [recentPromptSessionId, setRecentPromptSessionId] = useState<string | null>(null)
   const { messages, sendMessage, status, stop, error, setMessages } = useChat({ transport: aiChatTransport, messages: initialSession.current.messages })
-  const isStreaming = status === 'streaming' || status === 'submitted'
+  const isStreaming = status === 'streaming' || status === 'submitted' || isAnalyzing
   const activePromptHistory = messages
     .filter((message) => message.role === 'user')
     .map((message) => message.parts.filter((part) => part.type === 'text').map((part) => part.text).join('').trim())
@@ -116,6 +117,48 @@ function App() {
     setFileLabels([])
     setRecentPromptOverride(null)
     setRecentPromptSessionId(null)
+
+    if (files.length > 0) {
+      setIsAnalyzing(true)
+      let nextMessages = [...messages]
+
+      try {
+        for (const [index, file] of files.entries()) {
+          const userMessage: UIMessage = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            parts: [
+              ...(index === 0 && text ? [{ type: 'text' as const, text }] : []),
+              { type: 'file', filename: file.name, mediaType: file.type || 'application/octet-stream', url: URL.createObjectURL(file) },
+            ],
+          }
+          nextMessages = [...nextMessages, userMessage]
+          setMessages(nextMessages)
+
+          const analysis = await analyzeAttachedFile(file)
+          const assistantMessage: UIMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            metadata: { type: 'context-analysis', ...analysis },
+            parts: [{ type: 'text', text: analysis.problem_statement || 'Context analysis completed.' }],
+          }
+          nextMessages = [...nextMessages, assistantMessage]
+          setMessages(nextMessages)
+        }
+      } catch (analysisError) {
+        const message = analysisError instanceof Error ? analysisError.message : 'Unable to analyze the attached file.'
+        nextMessages = [...nextMessages, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          parts: [{ type: 'text', text: message }],
+        }]
+        setMessages(nextMessages)
+      } finally {
+        setIsAnalyzing(false)
+      }
+      return
+    }
+
     await sendMessage({ text, files: fileTransfer?.files })
   }
 
